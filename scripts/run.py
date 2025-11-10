@@ -6,7 +6,7 @@ import sys
 
 python3_exe = "python3"
 python_exe = "python"
-main_path = "main.py"
+MAIN_PATH = "main.py"
 
 if os.name == 'nt':
     print("\n\n\tWindows detected\n\n")
@@ -23,12 +23,12 @@ if not os.path.exists(python_path):
         print("\n\nError please check you have a virtual enviroment set up\n\n")
         sys.exit(-1)
 
-if not os.path.exists(main_path):
+if not os.path.exists(MAIN_PATH):
     print("\n\nError please check run.py script path\n\n")
     sys.exit(-1)
 
-if os.path.exists(python_path) and os.path.exists(main_path):
-    command = python_path + " " + main_path
+if os.path.exists(python_path) and os.path.exists(MAIN_PATH):
+    command = python_path + " " + MAIN_PATH
 
     sp.run(command, check=True, shell=True)
 else :
