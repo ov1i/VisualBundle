@@ -8,6 +8,7 @@ myenv
 myvenv
 .myenv
 myvenv
+.vscode
 
 # Compiled Object files
 *.slo
