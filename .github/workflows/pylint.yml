@@ -21,4 +21,4 @@ jobs:
         pip install -r "dependencies/requirements.txt"
     - name: Analysing the code with pylint
       run: |
-        pylint $(git ls-files '*.py') --extension-pkg-whitelist=cv2
+        pylint --extension-pkg-whitelist=cv2.*,cv.*,numpy.*,np.* $(git ls-files '*.py')
