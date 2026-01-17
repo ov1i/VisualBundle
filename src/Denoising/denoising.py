@@ -127,35 +127,35 @@ def update_display(x=None):
         sp_fix == 1
     )
     cv2.imshow('Denoising Test Console', processed_image)
-if __name__ == "__main__":
-    cale_absoluta = "/Users/ioana/Library/CloudStorage/OneDrive-Personal/School-DESKTOP-5LL07UF/Erasmus/ESAT/proiect/image_testing/noisy.png"
+# if __name__ == "__main__":
+#     cale_absoluta = "/Users/ioana/Library/CloudStorage/OneDrive-Personal/School-DESKTOP-5LL07UF/Erasmus/ESAT/proiect/image_testing/noisy.png"
     
-    print(f"Încărcare imagine de la: {cale_absoluta}...")
-    original_image = cv2.imread(cale_absoluta) # Folosim original_image aici
+#     print(f"Încărcare imagine de la: {cale_absoluta}...")
+#     original_image = cv2.imread(cale_absoluta) # Folosim original_image aici
 
-    if original_image is None:
-        print("EROARE: Imaginea nu a fost găsită la calea specificată.")
-    else:
-        print("Succes! Consola de testare este activă.")
+#     if original_image is None:
+#         print("EROARE: Imaginea nu a fost găsită la calea specificată.")
+#     else:
+#         print("Succes! Consola de testare este activă.")
         
-        cv2.namedWindow('Denoising Test Console')
-        cv2.namedWindow('Original Image') # Fereastră pentru imaginea originală
+#         cv2.namedWindow('Denoising Test Console')
+#         cv2.namedWindow('Original Image') # Fereastră pentru imaginea originală
 
-        # Creare Slidere
-        cv2.createTrackbar('Strength', 'Denoising Test Console', 10, 30, update_display)
-        cv2.createTrackbar('Mode (0:NLM, 1:Bilat)', 'Denoising Test Console', 1, 1, update_display)
-        cv2.createTrackbar('Salt&Pepper (0:OFF, 1:ON)', 'Denoising Test Console', 0, 1, update_display)
+#         # Creare Slidere
+#         cv2.createTrackbar('Strength', 'Denoising Test Console', 10, 30, update_display)
+#         cv2.createTrackbar('Mode (0:NLM, 1:Bilat)', 'Denoising Test Console', 1, 1, update_display)
+#         cv2.createTrackbar('Salt&Pepper (0:OFF, 1:ON)', 'Denoising Test Console', 0, 1, update_display)
         
-        # Slider special pentru declanșarea funcției AUTO-SUGGEST
-        cv2.createTrackbar('AUTO-SUGGEST (0/1)', 'Denoising Test Console', 0, 1, update_display)
+#         # Slider special pentru declanșarea funcției AUTO-SUGGEST
+#         cv2.createTrackbar('AUTO-SUGGEST (0/1)', 'Denoising Test Console', 0, 1, update_display)
 
-        # Afișare inițială
-        update_display()
+#         # Afișare inițială
+#         update_display()
         
-        print("\n--- CONSOLĂ DE TESTARE INTERACTIVĂ ---")
-        print("Reglează setările cu sliderele.")
-        print("Activează 'AUTO-SUGGEST' pentru a vedea recomandările algoritmului.")
-        print("Apasă orice tastă pentru a închide ferestrele.")
+#         print("\n--- CONSOLĂ DE TESTARE INTERACTIVĂ ---")
+#         print("Reglează setările cu sliderele.")
+#         print("Activează 'AUTO-SUGGEST' pentru a vedea recomandările algoritmului.")
+#         print("Apasă orice tastă pentru a închide ferestrele.")
         
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+#         cv2.waitKey(0)
+#         cv2.destroyAllWindows()
