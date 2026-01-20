@@ -257,7 +257,7 @@ def denoise_auto_action():
         return
 
     try:
-        base_pil = get_current_image_pil()
+        base_pil = loaded_image_pil
         cv_img = pil_to_cv2_bgr(base_pil)
 
         result, strength, mode, sp_fix = apply_auto_denoising_logic(cv_img)
@@ -293,7 +293,7 @@ def apply_manual_denoise_now():
         return
 
     try:
-        base_pil = get_current_image_pil()
+        base_pil = loaded_image_pil
         cv_img = pil_to_cv2_bgr(base_pil)
 
         strength = int(round(denoise_strength_slider.get()))
