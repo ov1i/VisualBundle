@@ -53,7 +53,3 @@ def apply_color_filter(img, preset_name, intensity_percent):
     )
 
     return output
-
-
-
-

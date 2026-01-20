@@ -27,9 +27,9 @@ myvenv
 *.pdb
 
 # Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+# *.so
+# *.dylib
+# *.dll
 
 # Fortran module files
 *.mod
@@ -55,11 +55,12 @@ __pycache__/
 *$py.class
 
 # C extensions
-*.so
+# *.so
 
 # Distribution / packaging
 .Python
 build/
+.build/
 develop-eggs/
 dist/
 downloads/
