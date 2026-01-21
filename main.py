@@ -1,11 +1,17 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-from PIL import Image
+from PIL import Image, ImageTk, ImageDraw
 
 import numpy as np
 import cv2
 import sys
 import os
+
+# --- PATH SETUP (For C++ Module) ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+freezed_libs_path = os.path.join(current_dir, "freezed_libs")
+if os.path.exists(freezed_libs_path):
+    sys.path.append(freezed_libs_path)
 
 # --- IMPORTS ---
 import src.Other.bkgr as bkgr
@@ -14,12 +20,14 @@ import src.Llie.Llie as llie
 import src.Filtering.apply as filtering
 from src.Denoising.denoising import apply_auto_denoising_logic, apply_denoising_logic
 
-# Try importing the C++ Object Remover
+# Try importing C++ Module
 try:
     import ObjectRemover_core
     HAS_CPP_REMOVER = True
+    print("✅ C++ ObjectRemover detected.")
 except ImportError:
     HAS_CPP_REMOVER = False
+    print("⚠️ C++ ObjectRemover NOT found. Using Python fallback.")
 
 # -----------------------------------------------------------
 # COLORS
@@ -37,25 +45,23 @@ loaded_image_pil = None
 loaded_image_path = None
 edited_image_pil = None
 
-# Resizing State
+# Optimization Cache (Fixes Lag)
+center_cached_img = None
+center_scale_factor = 1.0
+center_offsets = (0, 0)
+
+# UI State
 last_width = 1600
 last_height = 900
 resize_after_id = None
 is_window_resizing = False
 window_resize_id = None
 
-# Denoise UI state
 denoise_controls_visible = False
 denoise_update_after_id = None 
-
-# LLIE UI state
 llie_controls_visible = False
 llie_update_after_id = None 
-
-# Filter UI state
 filter_update_after_id = None
-
-# View Swap State
 is_view_swapped = False
 
 # Object Removal State
@@ -86,11 +92,68 @@ def ensure_image_loaded() -> bool:
         return False
     return True
 
+def get_display_params(pil_img, container_widget):
+    """
+    Calculates precise scaling and centering offsets.
+    Essential for mapping mouse clicks (Screen) to image pixels (Texture).
+    """
+    box_w = container_widget.winfo_width()
+    box_h = container_widget.winfo_height()
+    
+    if box_w < 50 or box_h < 50: return 1.0, 0, 0
+
+    # Padding margin inside the widget
+    margin = 20
+    target_w = max(10, box_w - (margin * 2))
+    target_h = max(10, box_h - (margin * 2))
+
+    img_w, img_h = pil_img.size
+    
+    # Calculate scale to FIT inside the padded area
+    scale = min(target_w / img_w, target_h / img_h)
+
+    # Calculate dimensions of the displayed image on screen
+    disp_w = int(img_w * scale)
+    disp_h = int(img_h * scale)
+
+    # Calculate offsets to center the image within the container
+    off_x = (box_w - disp_w) // 2
+    off_y = (box_h - disp_h) // 2
+
+    return scale, off_x, off_y
+
 # -----------------------------------------------------------
-# DISPLAY LOGIC (SWAP + DYNAMIC FIT)
+# PYTHON FALLBACK ALGORITHM (Texture Grafting)
+# -----------------------------------------------------------
+def apply_smart_inpaint(img_bgr, rx, ry, rw, rh):
+    """
+    Fallback if C++ fails. Uses Frequency Separation to graft texture.
+    """
+    mask = np.zeros(img_bgr.shape[:2], dtype=np.uint8)
+    pad = 10
+    y1, y2 = max(0, ry-pad), min(img_bgr.shape[0], ry+rh+pad)
+    x1, x2 = max(0, rx-pad), min(img_bgr.shape[1], rx+rw+pad)
+    mask[y1:y2, x1:x2] = 255
+
+    # Structure
+    inpainted = cv2.inpaint(img_bgr, mask, 5, cv2.INPAINT_NS)
+
+    # Texture
+    noise = np.random.normal(0, 15, inpainted.shape).astype(np.int16)
+    inpainted_16 = inpainted.astype(np.int16)
+    textured = np.clip(cv2.add(inpainted_16, noise), 0, 255).astype(np.uint8)
+
+    # Blend
+    final_img = inpainted.copy()
+    locs = np.where(mask > 0)
+    final_img[locs] = textured[locs]
+    
+    return final_img
+
+# -----------------------------------------------------------
+# DISPLAY LOGIC
 # -----------------------------------------------------------
 def toggle_view_swap(event=None):
-    """Swaps the Original and Edited images between Left and Center boxes."""
     global is_view_swapped
     if loaded_image_pil is None: return
     is_view_swapped = not is_view_swapped
@@ -101,53 +164,154 @@ def display_image_in_guidebox():
     if loaded_image_pil is None:
         guide_image_label.configure(image=None, text="")
         return
-    
-    # Logic: If swapped, show Result here. Else show Original.
-    if is_view_swapped:
-        img = edited_image_pil if edited_image_pil is not None else loaded_image_pil
-    else:
-        img = loaded_image_pil
-
+    img = edited_image_pil if (is_view_swapped and edited_image_pil) else loaded_image_pil
+    # Pass guide_box (Frame) for sizing context
     _display_image(img, guide_box, guide_image_label)
 
 def display_image_in_centerbox():
+    global center_cached_img, center_scale_factor, center_offsets
+    
     current_result = edited_image_pil if edited_image_pil is not None else loaded_image_pil
     if current_result is None:
         center_image_label.configure(image=None, text="Edited image will appear here")
         return
 
-    # Logic: If swapped, show Original here. Else show Result.
-    if is_view_swapped:
-        img_to_show = loaded_image_pil
-    else:
-        img_to_show = current_result
+    img_to_show = loaded_image_pil if is_view_swapped else current_result
+    # Pass image_box (Frame) for sizing context
+    _display_image(img_to_show, image_box, center_image_label, is_center=True)
 
-    _display_image(img_to_show, image_box, center_image_label)
+def _display_image(pil_img, container_widget, label_widget, is_center=False):
+    global center_cached_img, center_scale_factor, center_offsets
 
-def _display_image(pil_img, box_widget, label_widget):
-    # 1. Get container size
-    box_w = box_widget.winfo_width()
-    box_h = box_widget.winfo_height()
-
-    if box_w < 50 or box_h < 50: return
-
-    # Padding logic (20px margin per side)
-    target_w = max(10, box_w - 40)
-    target_h = max(10, box_h - 40)
-
-    # 2. Scale image to FIT inside the padding
-    img_w, img_h = pil_img.size
-    scale = min(target_w / img_w, target_h / img_h)
-
-    new_w = int(img_w * scale)
-    new_h = int(img_h * scale)
-
-    # 3. Resize and Display
-    resized = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    ctk_img = ctk.CTkImage(light_image=resized, size=(new_w, new_h))
+    # Calculate layout relative to the Container Frame
+    scale, off_x, off_y = get_display_params(pil_img, container_widget)
     
+    if scale <= 0: return
+
+    new_w = int(pil_img.size[0] * scale)
+    new_h = int(pil_img.size[1] * scale)
+
+    # Resize (High Quality)
+    resized = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    
+    if is_center:
+        center_cached_img = resized
+        center_scale_factor = scale
+        center_offsets = (off_x, off_y)
+
+    ctk_img = ctk.CTkImage(light_image=resized, size=(new_w, new_h))
     label_widget.configure(image=ctk_img, text="")
     label_widget.image = ctk_img
+
+# -----------------------------------------------------------
+# MOUSE LOGIC (WITH PRECISE OFFSETS)
+# -----------------------------------------------------------
+def on_mouse_down(e):
+    global roi_start, is_selecting
+    if loaded_image_pil and not is_view_swapped:
+        is_selecting = True
+        roi_start = (e.x, e.y)
+
+def on_mouse_drag(e):
+    global roi_end
+    if is_selecting:
+        roi_end = (e.x, e.y)
+        draw_selection_fast()
+
+def on_mouse_up(e):
+    global is_selecting, roi_end
+    if is_selecting:
+        is_selecting = False
+        roi_end = (e.x, e.y)
+        draw_selection_fast()
+
+def draw_selection_fast():
+    """Draws red box on the cached small image directly."""
+    if center_cached_img is None or not roi_start or not roi_end: return
+
+    temp_img = center_cached_img.copy()
+    draw = ImageDraw.Draw(temp_img)
+
+    # 1. FIX OFFSET: The mouse coordinates are already relative to the image
+    # because the Label fits the image exactly. We do NOT subtract offsets.
+    x1, y1 = roi_start
+    x2, y2 = roi_end
+
+    # 2. FIX CRASH: Sort coordinates (min/max) so that x0 <= x1 and y0 <= y1.
+    # This prevents "ValueError: y1 must be greater than or equal to y0"
+    rx1, rx2 = sorted([x1, x2])
+    ry1, ry2 = sorted([y1, y2])
+
+    # Draw the rectangle with sorted coordinates
+    draw.rectangle([rx1, ry1, rx2, ry2], outline="red", width=3)
+
+    ctk_img = ctk.CTkImage(light_image=temp_img, size=temp_img.size)
+    center_image_label.configure(image=ctk_img)
+    center_image_label.image = ctk_img
+
+# -----------------------------------------------------------
+# OBJECT REMOVAL EXECUTION (HYBRID C++/PYTHON)
+# -----------------------------------------------------------
+def run_object_removal():
+    global edited_image_pil, roi_start, roi_end
+    
+    if not ensure_image_loaded(): return
+    if not roi_start or not roi_end:
+        messagebox.showwarning("Select Area", "Please draw a box on the image first.")
+        return
+
+    # 1. Get Scale Factor
+    # We only need the scale. Offsets are handled by the Layout Manager.
+    scale = center_scale_factor
+
+    # 2. Normalize Selection Rect (Handle dragging left/up)
+    screen_x1, screen_x2 = sorted([roi_start[0], roi_end[0]])
+    screen_y1, screen_y2 = sorted([roi_start[1], roi_end[1]])
+    
+    screen_w = screen_x2 - screen_x1
+    screen_h = screen_y2 - screen_y1
+
+    img = get_current_image_pil()
+    
+    # 3. Map Screen Coords -> Original Image Pixels
+    # Simple scaling because screen coords are already relative to image top-left
+    rx = int(screen_x1 / scale)
+    ry = int(screen_y1 / scale)
+    rw = int(screen_w / scale)
+    rh = int(screen_h / scale)
+
+    # 4. Safety Bounds (Clamp to image size)
+    if rw <= 0 or rh <= 0: return
+    rx = max(0, min(rx, img.width - 1))
+    ry = max(0, min(ry, img.height - 1))
+    rw = min(rw, img.width - rx)
+    rh = min(rh, img.height - ry)
+
+    # 5. Process
+    try:
+        cv_img = pil_to_cv2_bgr(img)
+        
+        # Hybrid C++ / Python Logic
+        if HAS_CPP_REMOVER:
+            print("Processing with C++...")
+            remover.set_image(cv_img)
+            remover.set_selection(rx, ry, rw, rh)
+            remover.process()
+            result_cv = remover.get_result()
+        else:
+            print("Processing with Python Smart Fallback...")
+            result_cv = apply_smart_inpaint(cv_img, rx, ry, rw, rh)
+
+        edited_image_pil = cv2_to_pil(result_cv)
+        
+        # Clear selection after processing
+        roi_start = None
+        roi_end = None
+        
+        display_image_in_centerbox()
+        
+    except Exception as e:
+        messagebox.showerror("Removal Error", str(e))
 
 # -----------------------------------------------------------
 # CORE ACTIONS
@@ -161,13 +325,11 @@ def select_image():
     loaded_image_pil = Image.open(path)
     edited_image_pil = None
     
-    # Reset All Controls
+    # Reset UI
     denoise_strength_slider.set(0)
     denoise_strength_value.configure(text="0")
-    
     llie_int_slider.set(0)
     llie_int_value.configure(text="0")
-    
     tone_slider.set(0)
     preset_menu.set("None")
 
@@ -179,17 +341,10 @@ def reset_image_action():
     if not ensure_image_loaded(): return
     edited_image_pil = None
     
-    # Reset UI
     denoise_strength_slider.set(0)
     denoise_strength_value.configure(text="0")
-    edge_preserving_switch.select()
-    salt_pepper_switch.deselect()
-    
     llie_int_slider.set(0)
     llie_int_value.configure(text="0")
-    llie_det_slider.set(30)
-    llie_clip_slider.set(2.0)
-    
     tone_slider.set(0)
     preset_menu.set("None")
     
@@ -223,38 +378,31 @@ def flip_vertical_action():
     display_image_in_centerbox()
 
 # -----------------------------------------------------------
-# FILTERING (TONE & PRESETS)
+# FILTERING
 # -----------------------------------------------------------
 def schedule_filter_update(value=None):
     global filter_update_after_id
-    if filter_update_after_id is not None:
-        app.after_cancel(filter_update_after_id)
+    if filter_update_after_id is not None: app.after_cancel(filter_update_after_id)
     filter_update_after_id = app.after(50, apply_filter_now)
 
 def update_filter_preset(choice):
-    if tone_slider.get() == 0 and choice != "None":
-        tone_slider.set(50)
+    if tone_slider.get() == 0 and choice != "None": tone_slider.set(50)
     apply_filter_now()
 
 def apply_filter_now():
     global edited_image_pil, filter_update_after_id
     filter_update_after_id = None
     if not ensure_image_loaded(): return
-
     try:
         base_pil = loaded_image_pil
         cv_img = pil_to_cv2_bgr(base_pil)
-
         preset = preset_menu.get()
         intensity = tone_slider.get()
-
         if preset != "None" or intensity > 0:
             cv_img = filtering.apply_color_filter(cv_img, preset, intensity)
-
         edited_image_pil = cv2_to_pil(cv_img)
         display_image_in_centerbox()
-    except Exception as e:
-        messagebox.showerror("Filter Error", str(e))
+    except Exception as e: messagebox.showerror("Filter Error", str(e))
 
 # -----------------------------------------------------------
 # DENOISING
@@ -274,12 +422,10 @@ def denoise_auto_action():
         base = loaded_image_pil
         cv_img = pil_to_cv2_bgr(base)
         _, s, m, sp = apply_auto_denoising_logic(cv_img)
-        
         denoise_strength_slider.set(s)
         denoise_strength_value.configure(text=str(int(s)))
         edge_preserving_switch.select() if m else edge_preserving_switch.deselect()
         salt_pepper_switch.select() if sp else salt_pepper_switch.deselect()
-        
         edited_image_pil = cv2_to_pil(apply_denoising_logic(cv_img, s, m, sp))
         display_image_in_centerbox()
     except Exception as e: messagebox.showerror("Error", str(e))
@@ -335,79 +481,18 @@ def apply_llie_now():
     global edited_image_pil, llie_update_after_id
     llie_update_after_id = None
     if not ensure_image_loaded(): return
-
     try:
         base_pil = loaded_image_pil
         cv_img = pil_to_cv2_bgr(base_pil)
-
         intensity_val = llie_int_slider.get()
         if intensity_val > 0:
             intensity = intensity_val / 100.0
             detail = llie_det_slider.get() / 100.0
             clip = llie_clip_slider.get()
             cv_img = llie.enhance_image(cv_img, intensity=intensity, detail=detail, clahe_clip=clip)
-
         edited_image_pil = cv2_to_pil(cv_img)
         display_image_in_centerbox()
     except Exception as e: messagebox.showerror("Error", f"LLIE failed: {e}")
-
-# -----------------------------------------------------------
-# OBJECT REMOVAL
-# -----------------------------------------------------------
-def run_object_removal():
-    global edited_image_pil, roi_start, roi_end
-    if not HAS_CPP_REMOVER:
-        messagebox.showerror("Error", "C++ Module Missing")
-        return
-    if not ensure_image_loaded() or not roi_start or not roi_end:
-        messagebox.showwarning("Select", "Please draw a box first.")
-        return
-
-    # ROI Mapping Logic
-    img = edited_image_pil if edited_image_pil else loaded_image_pil
-    box_w, box_h = center_image_label.winfo_width(), center_image_label.winfo_height()
-    
-    target_w = max(10, box_w - 40)
-    target_h = max(10, box_h - 40)
-    scale = min(target_w / img.size[0], target_h / img.size[1])
-    
-    disp_w, disp_h = int(img.size[0] * scale), int(img.size[1] * scale)
-    off_x, off_y = (box_w - disp_w) // 2, (box_h - disp_h) // 2
-    
-    x1, y1 = roi_start
-    x2, y2 = roi_end
-    rx = int((min(x1, x2) - off_x) / scale)
-    ry = int((min(y1, y2) - off_y) / scale)
-    rw = int(abs(x2 - x1) / scale)
-    rh = int(abs(y2 - y1) / scale)
-
-    if rw <= 0 or rh <= 0: return
-
-    try:
-        cv_img = pil_to_cv2_bgr(img)
-        remover.set_image(cv_img)
-        remover.set_selection(rx, ry, rw, rh)
-        remover.process()
-        edited_image_pil = cv2_to_pil(remover.get_result())
-        roi_start = None
-        display_image_in_centerbox()
-    except Exception as e: print(e)
-
-# Mouse Logic
-def on_mouse_down(e):
-    global roi_start, is_selecting
-    if loaded_image_pil: is_selecting, roi_start = True, (e.x, e.y)
-def on_mouse_drag(e):
-    global roi_end
-    if is_selecting: roi_end = (e.x, e.y); draw_selection()
-def on_mouse_up(e):
-    global is_selecting, roi_end
-    is_selecting, roi_end = False, (e.x, e.y); draw_selection()
-
-def draw_selection():
-    img = edited_image_pil if edited_image_pil else loaded_image_pil
-    if not img or not roi_start or not roi_end: return
-    _display_image(img, image_box, center_image_label)
 
 # -----------------------------------------------------------
 # MAIN SETUP & LAYOUT
@@ -447,8 +532,6 @@ guide_box = ctk.CTkFrame(left_panel, fg_color=BOX_COLOR, corner_radius=30)
 guide_box.grid(row=0, column=0, sticky="nsew", pady=10)
 guide_image_label = ctk.CTkLabel(guide_box, text="")
 guide_image_label.pack(expand=True)
-
-# ADDED BINDING FOR SWAP
 guide_image_label.bind("<Button-1>", toggle_view_swap)
 
 select_btn = ctk.CTkButton(left_panel, text="Select image", fg_color=BUTTON_LEFT, text_color="black", command=select_image)
@@ -476,11 +559,9 @@ right_panel = ctk.CTkFrame(content_frame, fg_color=BG_COLOR)
 right_panel.grid(row=1, column=2, sticky="nsew", padx=20)
 right_panel.grid_columnconfigure(0, weight=1)
 
-# 1. Object Removal
 remove_btn = ctk.CTkButton(right_panel, text="Object removal tool", fg_color=BUTTON_RIGHT, text_color="black", command=run_object_removal)
 remove_btn.grid(row=0, column=0, sticky="ew", pady=5)
 
-# 2. Denoising
 denoise_btn = ctk.CTkButton(right_panel, text="Image denoising", fg_color=BUTTON_RIGHT, text_color="black", command=toggle_denoise_controls)
 denoise_btn.grid(row=1, column=0, sticky="ew", pady=5)
 
@@ -511,16 +592,13 @@ salt_pepper_switch = ctk.CTkSwitch(denoise_controls_frame, text="Salt & Pepper F
 salt_pepper_switch.grid(row=5, column=0, sticky="w")
 denoise_controls_frame.grid_remove()
 
-# 3. LLIE
 llie_btn = ctk.CTkButton(right_panel, text="Low Light Enhance", fg_color=BUTTON_RIGHT, text_color="black", command=toggle_llie_controls)
 llie_btn.grid(row=3, column=0, sticky="ew", pady=5)
 
 llie_controls_frame = ctk.CTkFrame(right_panel, fg_color=BG_COLOR)
 llie_controls_frame.grid_columnconfigure(0, weight=1)
-
 llie_title = ctk.CTkLabel(llie_controls_frame, text="Advanced Options", font=("Georgia", 18, "bold"), text_color=TEXT_COLOR)
 llie_title.grid(row=0, column=0, sticky="w", pady=(0, 6))
-
 llie_auto_btn = ctk.CTkButton(llie_controls_frame, text="Auto Enhance", fg_color=BUTTON_RIGHT, text_color="black", command=llie_auto_action)
 llie_auto_btn.grid(row=1, column=0, sticky="ew", pady=(0, 10))
 
@@ -544,27 +622,20 @@ ctk.CTkLabel(llie_controls_frame, text="CLAHE Clip Limit", font=("Arial", 12), t
 llie_clip_slider = ctk.CTkSlider(llie_controls_frame, from_=1.0, to=5.0, number_of_steps=40, command=schedule_llie_update)
 llie_clip_slider.set(2.0)
 llie_clip_slider.grid(row=7, column=0, sticky="ew", pady=(0, 5))
-
 llie_controls_frame.grid_remove()
 
-# 4. Other Buttons
 bg_remove_btn = ctk.CTkButton(right_panel, text="Remove background", fg_color=BUTTON_RIGHT, text_color="black", command=remove_background_action)
 bg_remove_btn.grid(row=5, column=0, sticky="ew", pady=5)
-
 flip_h_btn = ctk.CTkButton(right_panel, text="Flip horizontal", fg_color=BUTTON_RIGHT, text_color="black", command=flip_horizontal_action)
 flip_h_btn.grid(row=6, column=0, sticky="ew", pady=5)
-
 flip_v_btn = ctk.CTkButton(right_panel, text="Flip vertical", fg_color=BUTTON_RIGHT, text_color="black", command=flip_vertical_action)
 flip_v_btn.grid(row=7, column=0, sticky="ew", pady=5)
 
-# 5. Tone & Filter
 tone_label = ctk.CTkLabel(right_panel, text="Artistic color tone", font=("Georgia", 20, "bold"))
 tone_label.grid(row=8, column=0, sticky="w", pady=(10,0))
-
 tone_slider = ctk.CTkSlider(right_panel, from_=0, to=100, command=schedule_filter_update)
 tone_slider.set(0)
 tone_slider.grid(row=9, column=0, sticky="ew", pady=5)
-
 preset_menu = ctk.CTkOptionMenu(right_panel, values=["None", "Warm", "Cool", "Sepia", "Cinematic", "Black & White"], fg_color=BUTTON_RIGHT, text_color="black", command=update_filter_preset)
 preset_menu.grid(row=10, column=0, sticky="e", pady=5)
 

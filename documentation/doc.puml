@@ -1,0 +1,171 @@
+@startuml
+
+' --- Setări Vizuale Profesionale ---
+skinparam classAttributeIconSize 0
+skinparam backgroundColor #FEFEFE
+skinparam roundcorner 10
+skinparam shadowing true
+skinparam packageStyle rectangle
+skinparam linetype ortho
+
+title Arhitectura Completă IntelliPixel (Python + C++)
+
+' ==========================================
+' 1. LANSARE (Entry Point)
+' ==========================================
+package "Launcher" {
+    class "run.py" as Launcher {
+        + main()
+        note: Verifică venv și OS\nLansează procesul main.py
+    }
+}
+
+' ==========================================
+' 2. GUI & CONTROL (Python)
+' ==========================================
+package "Frontend (GUI Layer)" {
+    class "GUI.py / main.py" as App {
+        - ctk.CTk window
+        - PIL.Image loaded_image
+        - PIL.Image edited_image
+        --
+        + select_image()
+        + display_image()
+        -- Event Handlers --
+        + run_object_removal()
+        + run_denoise_manual()
+        + run_denoise_auto()
+        + run_llie()
+        + run_filter()
+        + run_bg_remove()
+        + run_flip()
+    }
+}
+
+' ==========================================
+' 3. MODUL PROCESARE PYTHON (Image Processing)
+' ==========================================
+package "Python Processing Modules (src)" {
+    
+    ' --- LLIE ---
+    package "Llie" {
+        class "Low Light Enhance" as LLIE {
+            + enhance_image(img, intensity, detail...)
+            - apply_clahe_color()
+            - single_scale_retinex()
+            - unsharp_mask()
+            - combine_adaptive()
+        }
+    }
+
+    ' --- FILTERING ---
+    package "Filtering" {
+        class "Color Filters" as Filters {
+            + apply_color_filter(img, preset, intensity)
+            - apply_lut()
+            - build_warm_lut()
+            - build_cool_lut()
+            - build_sepia_lut()
+            - build_cinematic_lut()
+        }
+    }
+
+    ' --- DENOISING ---
+    package "Denoising" {
+        class "ImageDenoiser" as DenoiserClass {
+            {static} + estimate_noise_level()
+            {static} + denoise_nlm()
+            {static} + denoise_bilateral()
+            + get_auto_params()
+        }
+        
+        class "Denoise API" as DenoiseAPI {
+            + apply_denoising_logic()
+            + apply_auto_denoising_logic()
+        }
+        DenoiseAPI ..> DenoiserClass : uses
+    }
+
+    ' --- OTHER UTILS ---
+    package "Other" {
+        class "Background Removal" as Bkgr {
+            + run_background_removal(path)
+            note: Folosește librăria 'rembg'
+        }
+
+        class "Flip Utils" as Flip {
+            + flip_horizontal()
+            + flip_vertical()
+        }
+    }
+}
+
+' ==========================================
+' 4. BACKEND C++ (High Performance)
+' ==========================================
+package "Native Backend (C++ / Pybind11)" {
+    
+    interface "ObjectRemover_core (Module)" as Binder {
+        <<Binary .so/.pyd>>
+        + set_image(numpy_array)
+        + set_selection(rect)
+        + process()
+        + get_result()
+    }
+
+    class "PatchRemover (C++)" as CppAlgo {
+        - cv::Mat srcImage
+        - cv::Mat mask
+        - cv::Mat workImage
+        - cv::Mat priority
+        --
+        + setImage()
+        + process()
+        + getResult()
+        -- Algoritm Criminisi --
+        - initializeMaps()
+        - calculateFillFront()
+        - computePriority()
+        - findBestExemplar()
+        - updateImage()
+    }
+    
+    class InpaintSettings {
+        + int patchRadius
+        + float searchStep
+        + bool useGpu
+    }
+}
+
+' ==========================================
+' 5. RELAȚII ÎNTRE COMPONENTE
+' ==========================================
+
+' Launcher porneste App
+Launcher --> App : "Spawns Process"
+
+' App apeleaza modulele Python
+App --> LLIE : "Low Light"
+App --> Filters : "Color Tones"
+App --> DenoiseAPI : "Denoising"
+App --> Bkgr : "Remove BG"
+App --> Flip : "Geometry"
+
+' App apeleaza C++ prin Binder
+App --> Binder : "Object Removal"
+Binder *-- CppAlgo : "Wraps"
+CppAlgo *-- InpaintSettings
+
+' Note explicative
+note top of LLIE
+  Combină CLAHE (Contrast)
+  cu Retinex (Iluminare)
+end note
+
+note bottom of CppAlgo
+  Algoritm avansat Criminisi
+  cu optimizare OpenMP/GPU
+  pentru umplere structurală
+end note
+
+@enduml
