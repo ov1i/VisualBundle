@@ -11,6 +11,14 @@ IF ERRORLEVEL 1 (
     exit /b
 )
 
+REM Check if Tkinter is available
+python -c "import tkinter" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Tkinter is NOT installed or not available in this Python environment.
+    echo You may need to install it or use a Python build that includes Tkinter.
+    exit /b 1
+)
+
 rem Check if pip is installed
 WHERE pip >nul 2>nul
 IF ERRORLEVEL 1 (
