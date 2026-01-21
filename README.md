@@ -9,7 +9,7 @@ TEAM:
 * Ovidiu Gherman
 
 Requirements:
-    <br>&nbsp;&nbsp;&nbsp;&nbsp; python3 -> installed (recommanded version >= 3.11)
+    <br>&nbsp;&nbsp;&nbsp;&nbsp; python3 + tk -> installed (recommanded version >= 3.11)
 
 How to run:
     <br>&nbsp;&nbsp;&nbsp;&nbsp; Windows:
