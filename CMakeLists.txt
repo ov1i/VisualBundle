@@ -6,6 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ==========================================
+# 0. ENABLE OPENMP (Multi-Threading)
+# ==========================================
+find_package(OpenMP)
+
+if(OpenMP_CXX_FOUND)
+    message(STATUS "OpenMP Found. Compiling with Multi-Threading support.")
+else()
+    message(WARNING "OpenMP NOT found. Compiling in Single-Threaded mode.")
+endif()
+
+# ==========================================
 # 1. DOWNLOAD & BUILD OPENCV
 # ==========================================
 message(STATUS "Downloading and compiling OpenCV...")
@@ -60,6 +71,11 @@ target_link_libraries(ObjectRemover_core PRIVATE
     opencv_photo 
     opencv_imgcodecs
 )
+
+# --- LINK OPENMP IF FOUND ---
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(ObjectRemover_core PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 # Manual Include Paths for Main Module
 target_include_directories(ObjectRemover_core PRIVATE 
